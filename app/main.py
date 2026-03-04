@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .cleanup import CleanupConfig, CleanupService
 from .ffmpeg_tools import extract_frames_uniform
-from .model_inference import run_frame_dummy
+from .model_inference import run_frame_dummy, run_pytorch_efficientnet_b0
 from .storage import BASE_DIR, FRAMES_DIR, UPLOADS_DIR, cleanup_old_jobs, delete_job, save_upload
 
 cleanup_service: CleanupService | None = None
@@ -36,9 +36,8 @@ async def lifespan(app: FastAPI):
         cleanup_service = None
 
 
-app = FastAPI(title="Antifake Server", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Antifake Server", version="0.6.0", lifespan=lifespan)
 
-# /frames/<job_id>/frame_0001.jpg
 app.mount("/frames", StaticFiles(directory=str(FRAMES_DIR)), name="frames")
 
 
@@ -53,17 +52,6 @@ def analyze(
     frames_count: int = 32,
     model: str = "frame_dummy",
 ) -> JSONResponse:
-    """
-    Шаг 1:
-      - кадры равномерно по времени
-      - frames_count по умолчанию 32
-      - scale width=320px
-
-    Шаг 2:
-      - model=frame_dummy
-      - ai_probability = null
-      - возвращаем duration_sec и frames_extracted
-    """
     t0 = time.time()
     job_id = uuid4().hex
 
@@ -81,14 +69,12 @@ def analyze(
         abs_paths: List[str] = [f.get("abs_path", "") for f in (frames_info.get("frames") or [])]
         frame_paths = [Path(p) for p in abs_paths if p]
 
-        # Шаг 2: заглушка модели
+        # ===== Шаг 3: выбор модели =====
         if model == "frame_dummy":
             inf = run_frame_dummy(frame_paths)
+        elif model == "pytorch_efficientnet_b0":
+            inf = run_pytorch_efficientnet_b0(frame_paths)
         else:
-            # пока других моделей нет — честный fallback
-            inf = run_frame_dummy(frame_paths)
-            inf.model = model  # type: ignore[attr-defined]  # безопасно для dataclass? нет, поэтому не делаем
-            # Вместо этого просто игнорируем и возвращаем dummy с пометкой:
             inf = run_frame_dummy(frame_paths)
             inf = type(inf)(
                 model=model,
